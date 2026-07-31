@@ -1,0 +1,25 @@
+# Environment variables (Secrets)
+.env
+.env.*
+!.env.example
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# IDE & OS files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Observability & Data artifacts
+.logfire/
+processed_data/
+DATA/
+8hr-MARATHON/
