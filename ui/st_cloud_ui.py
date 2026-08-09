@@ -117,5 +117,18 @@ if prompt := st.chat_input("Ask about your documentation..."):
             else:
                 st.caption("ℹ️ No context retrieved — conversational response.")
 
+            # Retrieved images — image_path is a local filesystem path from
+            # wherever ingestion ran; falls back to a caption note rather
+            # than crashing if the path isn't reachable from this UI.
+            image_sources = data.get("image_sources", [])
+            if image_sources:
+                with st.expander(f"🖼️ Retrieved Images ({len(image_sources)})"):
+                    for img in image_sources:
+                        try:
+                            st.image(img["image_path"], caption=f"{img.get('source', '')} — {img.get('location', '')}")
+                        except Exception:
+                            st.caption(f"🖼️ {img.get('source', '')} — {img.get('location', '')} (image unavailable)")
+                            st.info(img.get("caption_preview", ""))
+
             st.session_state.messages.append({"role": "assistant", "content": full_answer})
             logfire.info("✅ Chat cycle completed successfully.")

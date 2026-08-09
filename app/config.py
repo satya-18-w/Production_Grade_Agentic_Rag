@@ -8,6 +8,19 @@ class Settings:
     # --- GEMINI EMBEDDINGS ---
     GEMINI_API_KEY = os.getenv("GOOGLEGEMINI_API_KEY")
 
+    # --- GEMINI VISION (multimodal image captioning — primary) ---
+    GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+
+    # --- LOCAL VISION FALLBACK (zero-cost, used when Gemini fails/quota exhausted) ---
+    SMOLVLM_MODEL_ID = os.getenv("SMOLVLM_MODEL_ID", "HuggingFaceTB/SmolVLM-Instruct")
+
+    # --- MULTIMODAL INGESTION ---
+    # Kubernetes docs sourced from web articles (Medium, vendor docs) tend to
+    # keep images as external links rather than embedding them — fetching is
+    # on by default so those diagrams are actually captured. Set to "false"
+    # to keep ingestion strictly local (embedded/local images only).
+    ALLOW_EXTERNAL_IMAGE_FETCH = os.getenv("ALLOW_EXTERNAL_IMAGE_FETCH", "true").lower() == "true"
+
     # --- VECTOR DB (QDRANT) ---
     QDRANT_URL = os.getenv("QDRANT_CLUSTER_ENDPOINT")
     QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")

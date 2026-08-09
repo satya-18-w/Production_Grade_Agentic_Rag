@@ -55,6 +55,48 @@ def get_langchain_llm(feature: str = "rag") -> ChatOpenAI:
         )
     )
 
+# Guardrail gate config: primary target is the fast/cheap 8b model — intent
+# classification at the gate doesn't need the 70B model's quality. Falls back
+# to the 70B target only if the 8b target itself is unavailable. This keeps
+# guardrail calls inside the same fallback/retry/observability gateway as
+# every other LLM call in the system, instead of a raw ChatGroq client.
+GUARDRAIL_GATEWAY_CONFIG = {
+    "strategy": {"mode": "fallback"},
+    "cache": {"mode": "simple"},
+    "retry": {
+        "attempts": 2,
+        "on_status_codes": [429, 503]
+    },
+    "targets": [
+        {"override_params": {"model": f"@{settings.GROQ_SLUG_2}/llama-3.1-8b-instant"}},
+        {"override_params": {"model": f"@{settings.GROQ_SLUG}/llama-3.3-70b-versatile"}},
+    ]
+}
+
+
+def get_guardrail_llm() -> ChatOpenAI:
+    """
+    Portkey-backed ChatOpenAI for the NeMo Guardrails gate. Routes through the
+    same gateway (fallback + retry + dashboard visibility) as every other LLM
+    call in the system.
+    """
+    return ChatOpenAI(
+        api_key=settings.PORTKEY_API_KEY,
+        base_url=PORTKEY_GATEWAY_URL,
+        model=f"@{settings.GROQ_SLUG_2}/llama-3.1-8b-instant",
+        temperature=0,
+        default_headers=createHeaders(
+            api_key=settings.PORTKEY_API_KEY,
+            config=GUARDRAIL_GATEWAY_CONFIG,
+            metadata={
+                "feature": "guardrails",
+                "_user": "rag-system",
+                "environment": "production"
+            }
+        )
+    )
+
+
 def extract_cache_status(response) -> str:
     """
     Pull x-portkey-cache-status from the Portkey native client response headers.

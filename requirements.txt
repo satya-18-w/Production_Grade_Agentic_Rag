@@ -13,6 +13,21 @@ nest-asyncio                # Support for nested async loops in notebooks/stream
 google-generativeai         # Gemini API — embeddings (text-embedding-004 / gemini-embedding-001)
 langchain-google-genai      # LangChain integration for Gemini models
 
+# --- GEMINI VISION (multimodal image captioning) ---
+# NOTE: google-generativeai above is EOL (no further updates/bug fixes per
+# its own deprecation warning) — new multimodal code uses the current,
+# supported google-genai SDK instead. Both packages coexist; only new code
+# should depend on google-genai going forward.
+google-genai                # Current Gemini SDK — used by app/services/vision/captioning.py
+
+# --- LOCAL VISION FALLBACK (zero-cost, used when Gemini quota/API fails) ---
+# transformers>=4.46 needed for SmolVLM/Idefics3 architecture support — the
+# installed 4.17.0 (pulled transitively via sentence-transformers) predates
+# it by years and will raise "unrecognized model type" if not upgraded.
+transformers>=4.46.0        # Pinned up from the older transitive version — required for SmolVLM
+torch                       # CPU inference for the local SmolVLM fallback (already present transitively via sentence-transformers)
+Pillow                      # Image decoding for CLIP (image_embedding.py) and SmolVLM (captioning.py) — was an undeclared transitive dep, now used directly
+
 # --- VECTOR DB & RETRIEVAL ---
 qdrant-client               # Vector Database for semantic search
 flashrank                   # Ultra-fast local cross-encoder for semantic reranking

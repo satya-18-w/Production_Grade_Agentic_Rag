@@ -108,6 +108,22 @@ if prompt := st.chat_input("Ask about your documentation..."):
                                 preview = source[:100].replace("\n", " ") + "..."
                                 with st.expander(f"Chunk {i+1}: {preview}"):
                                     st.info(source)
+
+                    # --- SHOW RETRIEVED IMAGES ---
+                    # image_path is a local filesystem path from wherever
+                    # ingestion ran — works because the backend and this UI
+                    # currently share a filesystem. Falls back to a caption
+                    # note rather than crashing if the path isn't reachable
+                    # (e.g. backend and UI split across machines later).
+                    image_sources = data.get("image_sources", [])
+                    if image_sources:
+                        with st.expander(f"🖼️ Retrieved Images ({len(image_sources)})"):
+                            for img in image_sources:
+                                try:
+                                    st.image(img["image_path"], caption=f"{img.get('source', '')} — {img.get('location', '')}")
+                                except Exception:
+                                    st.caption(f"🖼️ {img.get('source', '')} — {img.get('location', '')} (image unavailable)")
+                                    st.info(img.get("caption_preview", ""))
                 except Exception as e:
                     logfire.error(f"❌ UI-Backend Connection Failed: {e}")
                     status.update(label="❌ Connection Failed", state="error")
