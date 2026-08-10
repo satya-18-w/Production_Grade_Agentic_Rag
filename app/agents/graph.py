@@ -1,6 +1,6 @@
 import os
 from langgraph.graph import StateGraph, END
-from langgraph_checkpoint_postgres import PostgresSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg_pool import ConnectionPool
 from app.agents.state import AgentState
 from app.agents.nodes.planner import planner_node

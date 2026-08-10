@@ -51,5 +51,6 @@ os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGSMITH_TRACING", "true")
 os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGSMITH_API_KEY", "")
 os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT", "rag_scale_test")
 os.environ["LANGCHAIN_ENDPOINT"] = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
-
+PORTKEY_GATEWAY_CONFIG_SLUG = os.getenv("PORTKEY_GATEWAY_CONFIG_SLUG")
+PORTKEY_GUARDRAIL_CONFIG_SLUG = os.getenv("PORTKEY_GUARDRAIL_CONFIG_SLUG")
 settings = Settings()

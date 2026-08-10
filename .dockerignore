@@ -1,0 +1,30 @@
+# Never bake secrets into an image — env_file in docker-compose.yml reads
+# .env from the host at container-start time instead.
+.env
+.env.*
+!.env.example
+
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+.git/
+.github/
+
+# Large and regenerable — ingestion recreates processed_data/ at runtime
+# (DATA/ alone is tens of MB of PDFs; the image should be code, not the
+# source corpus). evals/sample_images/ is NOT excluded — Track F2's
+# multimodal eval tab reads those 2 images (~580 KB total) at runtime, so
+# they need to actually be in the image.
+DATA/
+processed_data/
+
+.logfire/
+*.log
+
+# Editor/OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

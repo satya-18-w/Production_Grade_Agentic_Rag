@@ -332,7 +332,7 @@ Exported from `app/guardrails/__init__.py` alongside `initialize_rails`/`guard`,
 
 ## Track C — Image Upload Endpoint
 
-The backend/graph half of Track C: a real `/query` request can now carry an image, and it flows through validation, forced-technical routing, and the vision-native path built in Tracks B and D. The Streamlit file-picker widget that actually *sends* one is still outstanding — see the end of this section.
+A real `/query` request can now carry an image end to end — from the Streamlit chat input, through validation, forced-technical routing, and the vision-native path built in Tracks B and D.
 
 **Request shape** (`app/main.py` — `QueryRequest`):
 
@@ -384,9 +384,36 @@ if has_uploaded_image:
 
 **State:** `AgentState.uploaded_image: Optional[dict]` — set fresh from the current request on every `/query` call (never carried over from a previous turn), matching the same reset discipline already established for `image_sources` in Track A.
 
-> **Still outstanding.** The Streamlit UI has no file-picker or chat attachment widget yet — `ui/app.py`/`ui/st_cloud_ui.py` don't send `image_base64`. The endpoint is ready to receive one; nothing in this codebase currently produces the request that would exercise it end-to-end.
+### The Streamlit Upload Widget
 
-> **Not live-tested against the real Gemini vision-answering call or a real upload.** The base64 decode/validate logic was functionally tested with real bytes (see Track D). The full path — a real image through Gate 0, forced-technical routing, and `answer_with_vision()` — has not been exercised against a live request.
+`ui/app.py` and `ui/st_cloud_ui.py` both use Streamlit's native `chat_input(accept_file=True, file_type=[...])` — no separate file uploader, no version upgrade needed (confirmed against the installed environment: Streamlit 1.60.0).
+
+```python
+if submission := st.chat_input(
+    "Ask about your documentation...",
+    accept_file=True,
+    file_type=["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+):
+    user_text = submission.text
+    uploaded_file = submission.files[0] if submission.files else None
+```
+
+**Verified against Streamlit's actual source** (`streamlit/elements/widgets/chat.py`), not just the docstring: `accept_file=True` changes the return type from a plain `str` to a `ChatInputValue` dataclass with `text: str` and `files: list[UploadedFile]` — the same `UploadedFile` class `st.file_uploader` has always returned, with its standard `.getvalue()` (bytes) and `.type` (MIME string) interface. No surprises between the planned design and the actual API.
+
+The uploaded image is shown in the user's own chat bubble via `st.image(uploaded_file)`, encoded into the request exactly as the endpoint expects:
+
+```python
+payload = {"q": user_text, "thread_id": st.session_state.session_id}
+if uploaded_file:
+    payload["image_base64"] = base64.b64encode(uploaded_file.getvalue()).decode("ascii")
+    payload["image_content_type"] = uploaded_file.type
+```
+
+**v1 simplification, flagged in the plan and kept as designed:** chat history stores a text marker (`"[Image attached] {text}"`) rather than persisting raw image bytes across Streamlit reruns — the image is visible in the turn it was sent, not replayed from history afterward.
+
+Rejections need no special UI handling — Gate 0's `validate_uploaded_image()` rejection message already flows through the normal `answer` field the UI already renders.
+
+> **Not live-tested against the real Gemini vision-answering call or a real upload.** The base64 decode/validate logic was functionally tested with real bytes (see Track D), and the Streamlit API surface was verified against the installed package's source. The full path — a real browser upload through Gate 0, forced-technical routing, and `answer_with_vision()` — has not been exercised against a live running app.
 
 ---
 
@@ -397,3 +424,62 @@ if has_uploaded_image:
 - `app/services/retrieval/qdrant_service.py`, `app/agents/nodes/retriever.py` — Phase 2 named-vector search + merge
 - `DOCS/02_INGESTION_ENGINE.md` — the text-only ingestion pipeline this extends
 - `DOCS/12_RELIABILITY_FIXES.md` — the reliability fixes that preceded this feature
+
+---
+
+## Track E — PPTX Vector-Shape Diagram Rendering
+
+`extract_images_from_pptx()` only finds embedded `PICTURE` shapes. `architecture.pptx`'s 66 slides have zero of them — the diagrams are built entirely from native vector shapes (`FREEFORM`, `AUTO_SHAPE`), which is a structurally different problem: there's no embedded raster image to extract, because the diagram only exists as vector geometry. This track renders those specific slides to PNG instead.
+
+**This is the one loader in the codebase with a system binary dependency.** Everything else — pypdf, python-docx, python-pptx, BeautifulSoup, CLIP, even the Gemini/SmolVLM captioning — runs with only pip-installed packages. Rendering a PPTX slide requires an actual document-rendering engine; there is no pure-Python way to do it. Genuinely optional: if the dependency isn't present, this feature silently does nothing rather than breaking anything else.
+
+### Detection — Cheap, No LibreOffice Needed
+
+```python
+def needs_slide_render(slide) -> bool:
+    has_diagram_shapes = any(
+        s.shape_type in (MSO_SHAPE_TYPE.FREEFORM, MSO_SHAPE_TYPE.AUTO_SHAPE)
+        for s in slide.shapes
+    )
+    has_picture = any(s.shape_type == MSO_SHAPE_TYPE.PICTURE for s in slide.shapes)
+    return has_diagram_shapes and not has_picture
+```
+
+Pure `python-pptx` shape inspection — runs before paying for any LibreOffice conversion, and before even checking whether LibreOffice is installed at all. **Live-tested against the real corpus:** correctly identified **41 of `architecture.pptx`'s 66 slides** as rendering candidates, using only the shape-type data already explored when this whole track was first scoped.
+
+### Rendering — Best-Effort at Every Step
+
+```python
+def render_pptx_diagram_slides(file_path: str) -> List[ExtractedImage]:
+    ...
+```
+
+1. No candidate slides → returns `[]` immediately, never touches LibreOffice.
+2. `_find_soffice()` — checks `PATH` via `shutil.which`, then a few common absolute install locations (LibreOffice's own installer frequently doesn't add itself to `PATH`, especially on Windows/macOS). Not found → logs a warning, returns `[]`.
+3. `pdf2image` not installed → logs a warning, returns `[]`.
+4. `soffice --headless --convert-to pdf` runs as a `subprocess.run(..., timeout=60, check=True)` — no `shell=True`, a hard timeout so a hung LibreOffice process can't stall ingestion, into a `tempfile.TemporaryDirectory()` that's cleaned up automatically.
+5. Only the candidate pages are rendered via `pdf2image.convert_from_path(..., first_page=N, last_page=N)` — not the whole deck, even though LibreOffice already converted every slide to the intermediate PDF.
+6. Each render still passes through the same `MIN_IMAGE_BYTES` filter as every other extracted image.
+
+**Live-tested in this exact environment — the missing-dependency path, specifically.** Neither LibreOffice nor `pdf2image`/poppler are installed here. `render_pptx_diagram_slides('DATA/true_data/architecture.pptx')` was run for real: `_find_soffice()` correctly returned `None`, and the function returned `[]` with a warning logged — exactly the designed degrade, not a crash, confirmed against the actual failure mode this environment has rather than assumed.
+
+### Wired Alongside, Not Instead Of
+
+```python
+# app/ingestion/processor.py
+images = extract_images_from_pptx(file_path) + render_pptx_diagram_slides(file_path)
+```
+
+The two extractors look at disjoint sets of slides by construction — `needs_slide_render()` explicitly excludes any slide that already has a `PICTURE` shape — so there's no risk of double-capturing the same slide's content through both paths.
+
+### System Dependencies
+
+```
+apt-get install libreoffice poppler-utils   # Debian/Ubuntu
+```
+
+Not installed in this development environment. `requirements.txt` documents the `pdf2image` pip package with an explicit note that it's a thin wrapper around poppler's `pdftoppm`/`pdftocairo` binaries — not something pip can install on its own.
+
+> **Live-tested end-to-end — the success path, for real.** LibreOffice and poppler were installed in the WSL host (`apt-get install libreoffice-impress poppler-utils`), and `render_pptx_diagram_slides()` was run directly against the real `architecture.pptx`: **all 41 candidate slides rendered successfully in 12 seconds** (well inside the 60s timeout), producing real PNGs in the 100–400 KB range. One render (slide 8) was saved and visually inspected — it's a genuine, legible Kubernetes architecture diagram (masters, `kube-apiserver`, `etcd`, worker nodes, load balancer), confirming the slide-number-to-PDF-page mapping is correct and the output is real usable content, not blank pages or garbage.
+>
+> **Resolved.** The project's venv was originally Windows-based (`.venv/Scripts/python.exe`), which couldn't see the WSL-installed `soffice`/poppler binaries — `shutil.which("soffice")` returned `None` and a subprocess call raised `FileNotFoundError` from that interpreter. The project has since moved to a WSL-native venv (also fixed a separate, unrelated `pip install` performance problem — installing onto `/mnt/c/...` paths is extremely slow due to the WSL↔Windows 9P filesystem bridge; the venv now lives on native Linux storage at `~/venvs/production_grade_agentic_rag`, symlinked from `.venv` so nothing else in the project had to change). **Re-verified end to end through the actual project venv** (not a side test environment): `_find_soffice()` correctly resolves `/usr/bin/soffice`, and `render_pptx_diagram_slides()` rendered all 41 candidate slides from `architecture.pptx` in 17.7s — identical byte sizes to the earlier isolated test, confirming consistent, correct behavior now that it's running in the real application environment.

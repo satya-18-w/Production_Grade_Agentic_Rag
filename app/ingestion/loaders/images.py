@@ -1,3 +1,4 @@
+import io
 import ipaddress
 import os
 import socket
@@ -296,3 +297,158 @@ def _read_local_image(path: str, base_dir: str) -> Optional[Tuple[bytes, str]]:
         return data, _EXT_TO_MIME.get(ext, "image/png")
     except Exception:
         return None
+
+
+# ── PPTX vector-shape diagram rendering (Track E) ──────────────────────────
+#
+# extract_images_from_pptx() above only finds embedded PICTURE shapes.
+# Slides built entirely from native vector shapes (FREEFORM/AUTO_SHAPE —
+# common for hand-drawn architecture diagrams, confirmed on all 66 slides
+# of DATA/true_data/architecture.pptx) have nothing for it to find, since
+# there is no embedded raster image to extract — the diagram only exists
+# as vector geometry. This section renders those specific slides to PNG
+# via headless LibreOffice instead. Genuinely optional: everything else in
+# this file works with zero system dependencies; this is the one exception,
+# and it degrades to "no rendered slides" rather than failing ingestion if
+# LibreOffice isn't installed.
+
+RENDER_TIMEOUT = 60  # seconds — a single-file headless conversion, generous but bounded
+
+_SOFFICE_CANDIDATES = [
+    "soffice",
+    "libreoffice",
+    r"C:\Program Files\LibreOffice\program\soffice.exe",
+    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+]
+
+
+def _find_soffice() -> Optional[str]:
+    """
+    Locate a LibreOffice/soffice binary — checks PATH first via shutil.which,
+    then a few common absolute install locations across platforms, since
+    LibreOffice frequently isn't added to PATH by its own installer
+    (particularly on Windows and macOS). Returns None if not found anywhere
+    — the caller treats this as "feature unavailable," not an error.
+    """
+    import shutil
+
+    for candidate in _SOFFICE_CANDIDATES:
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def needs_slide_render(slide) -> bool:
+    """
+    A slide is a rendering candidate only if it has FREEFORM/AUTO_SHAPE
+    content (likely a diagram) AND no PICTURE shape was already found on
+    it — avoids rendering purely-text slides (redundant with the existing
+    text extraction) and slides that already have a real embedded image.
+    Pure python-pptx shape inspection — no LibreOffice needed for this
+    check, so it's cheap to run on every slide before deciding whether the
+    expensive conversion step is worth invoking at all.
+    """
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    has_diagram_shapes = False
+    has_picture = False
+    for shape in slide.shapes:
+        if shape.shape_type in (MSO_SHAPE_TYPE.FREEFORM, MSO_SHAPE_TYPE.AUTO_SHAPE):
+            has_diagram_shapes = True
+        elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            has_picture = True
+    return has_diagram_shapes and not has_picture
+
+
+def render_pptx_diagram_slides(file_path: str) -> List[ExtractedImage]:
+    """
+    Render vector-shape diagram slides (per needs_slide_render) to PNG via
+    headless LibreOffice, for slides where extract_images_from_pptx() finds
+    nothing because there's no embedded picture to extract.
+
+    Best-effort at every step, consistent with every other extractor in
+    this file: no candidate slides, no LibreOffice binary, a conversion
+    timeout, or any subprocess/rendering failure all degrade to an empty
+    list rather than raising — a missing system dependency should never
+    fail the rest of ingestion.
+    """
+    import subprocess
+    import tempfile
+    from pptx import Presentation
+
+    images: List[ExtractedImage] = []
+
+    with logfire.span("Slide Rendering (PPTX diagrams)", filename=file_path):
+        try:
+            prs = Presentation(file_path)
+            candidate_slide_numbers = [
+                i for i, slide in enumerate(prs.slides, start=1)
+                if needs_slide_render(slide)
+            ]
+        except Exception as e:
+            logfire.warning(f"Could not inspect slides for rendering candidates in {file_path}: {e}")
+            return images
+
+        if not candidate_slide_numbers:
+            return images
+
+        soffice = _find_soffice()
+        if not soffice:
+            logfire.warning(
+                f"{len(candidate_slide_numbers)} diagram slide(s) found in {file_path} but "
+                "LibreOffice is not installed — skipping slide rendering. "
+                "See DOCS/13_MULTIMODAL_RAG.md for the system dependency."
+            )
+            return images
+
+        try:
+            from pdf2image import convert_from_path
+        except ImportError:
+            logfire.warning(
+                "pdf2image is not installed — skipping slide rendering "
+                "(LibreOffice was found, but the PDF page renderer is missing)."
+            )
+            return images
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            try:
+                subprocess.run(
+                    [soffice, "--headless", "--convert-to", "pdf", "--outdir", tmp_dir, file_path],
+                    timeout=RENDER_TIMEOUT,
+                    capture_output=True,
+                    check=True,
+                )
+            except Exception as e:
+                logfire.warning(f"LibreOffice conversion failed for {file_path}: {e}")
+                return images
+
+            pdf_candidates = [f for f in os.listdir(tmp_dir) if f.lower().endswith(".pdf")]
+            if not pdf_candidates:
+                logfire.warning(f"LibreOffice produced no PDF output for {file_path}.")
+                return images
+            pdf_path = os.path.join(tmp_dir, pdf_candidates[0])
+
+            for slide_num in candidate_slide_numbers:
+                try:
+                    pages = convert_from_path(pdf_path, first_page=slide_num, last_page=slide_num, dpi=150)
+                    if not pages:
+                        continue
+                    buf = io.BytesIO()
+                    pages[0].save(buf, format="PNG")
+                    data = buf.getvalue()
+                    if len(data) < MIN_IMAGE_BYTES:
+                        continue
+                    images.append(ExtractedImage(
+                        data=data, ext="png", mime_type="image/png",
+                        location=f"slide {slide_num} (rendered)",
+                    ))
+                except Exception as e:
+                    logfire.warning(f"Could not render slide {slide_num} of {file_path}: {e}")
+
+        logfire.info(f"Rendered {len(images)} diagram slide(s) from {file_path}.")
+
+    return images

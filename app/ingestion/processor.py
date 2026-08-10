@@ -19,6 +19,7 @@ from app.ingestion.loaders.images import (
     extract_images_from_pptx,
     extract_images_from_docx,
     extract_images_from_html,
+    render_pptx_diagram_slides,
 )
 from app.ingestion.chunking.splitter import chunk_text
 
@@ -70,7 +71,13 @@ def process_images(file_path: str, filename: str, source_type: str, ext: str) ->
     if ext == "pdf":
         images = extract_images_from_pdf(file_path)
     elif ext == "pptx":
-        images = extract_images_from_pptx(file_path)
+        # Embedded PICTURE shapes (existing) plus rendered vector-shape
+        # diagram slides (Track E) — the two extractors look at disjoint
+        # sets of slides (needs_slide_render() explicitly skips slides that
+        # already have a PICTURE), so there's no risk of double-capturing
+        # the same slide. render_pptx_diagram_slides() degrades to []
+        # cleanly if LibreOffice isn't installed — never fails ingestion.
+        images = extract_images_from_pptx(file_path) + render_pptx_diagram_slides(file_path)
     elif ext == "docx":
         images = extract_images_from_docx(file_path)
     elif ext in ("html", "htm"):

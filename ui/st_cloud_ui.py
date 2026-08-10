@@ -1,4 +1,5 @@
 import os
+import base64
 import streamlit as st
 import requests
 import time
@@ -59,14 +60,35 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"], avatar=avatar):
         st.markdown(message["content"])
 
-# Chat Input
-if prompt := st.chat_input("Ask about your documentation..."):
+# Chat Input — accept_file lets a user attach a single image alongside
+# their message (Phase 3, Track C); file_type restricts the browser-side
+# picker to image formats, ahead of the server-side guardrail check in
+# app/guardrails/image_guard.py.
+if submission := st.chat_input(
+    "Ask about your documentation...",
+    accept_file=True,
+    file_type=["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+):
+    user_text = submission.text
+    uploaded_file = submission.files[0] if submission.files else None
+
     # START TRACE: User Interaction
-    with logfire.span("💬 User Chat Interaction", user_query=prompt, session_id=st.session_state.session_id):
-        
-        st.session_state.messages.append({"role": "user", "content": prompt})
+    with logfire.span(
+        "💬 User Chat Interaction",
+        user_query=user_text,
+        session_id=st.session_state.session_id,
+        has_image=bool(uploaded_file),
+    ):
+
+        # v1: store a text marker rather than persisting raw image bytes in
+        # session history — enough to show an image was part of the turn
+        # without carrying bytes forward across Streamlit reruns.
+        history_content = f"[Image attached] {user_text}" if uploaded_file else user_text
+        st.session_state.messages.append({"role": "user", "content": history_content})
         with st.chat_message("user", avatar=USER_AVATAR):
-            st.markdown(prompt)
+            if uploaded_file:
+                st.image(uploaded_file)
+            st.markdown(user_text)
 
         # Assistant Response
         with st.chat_message("assistant", avatar=AI_AVATAR):
@@ -75,7 +97,10 @@ if prompt := st.chat_input("Ask about your documentation..."):
                 try:
                     with logfire.span("📡 Calling RAG Backend"):
                         url = f"{base_url}/query"
-                        payload = {"q": prompt, "thread_id": st.session_state.session_id}
+                        payload = {"q": user_text, "thread_id": st.session_state.session_id}
+                        if uploaded_file:
+                            payload["image_base64"] = base64.b64encode(uploaded_file.getvalue()).decode("ascii")
+                            payload["image_content_type"] = uploaded_file.type
                         response = requests.post(url, json=payload, timeout=60)
 
                         if response.status_code != 200:

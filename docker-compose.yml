@@ -1,0 +1,93 @@
+# Full stack: Postgres (LangGraph memory) + FastAPI backend + Streamlit UI.
+# Qdrant stays external (Qdrant Cloud, per the QDRANT_CLUSTER_ENDPOINT
+# already configured in .env) rather than adding a redundant local
+# instance — the existing ingested collection lives there already.
+#
+# Quick start:
+#   docker compose up --build
+#   # then, once, to populate the knowledge base:
+#   docker compose run --rm backend python -m app.ingestion.processor DATA/true_data true --wipe
+#
+# Eval dashboard (not started by default):
+#   docker compose --profile evals up evals
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: floatchat
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file:
+      - .env
+    # No POSTGRES_URI override here — .env's own value is used as-is via
+    # env_file above. If that value points at localhost/127.0.0.1, it
+    # won't resolve from inside this container (localhost means "this
+    # container," not the host) — point it at the `postgres` service name
+    # instead, or at the host's real reachable address, when running via
+    # compose.
+    ports:
+      - "8000:8000"
+    volumes:
+      # Shared with `ui` below — image_path in Qdrant payloads (Track A)
+      # is a filesystem path written by whichever process ran ingestion.
+      # Without a shared volume, the UI container's st.image(image_path)
+      # would look for a file that only exists in the backend's own
+      # filesystem — exactly the "known limitation" flagged when Track A
+      # was built, now a real problem instead of a future one; this
+      # volume is what fixes it for the Docker deployment.
+      - processed_data:/app/processed_data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ui:
+    build: .
+    command: streamlit run ui/app.py --server.address 0.0.0.0 --server.port 8501
+    env_file:
+      - .env
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "8501:8501"
+    volumes:
+      - processed_data:/app/processed_data
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  evals:
+    build: .
+    command: streamlit run evals/app.py --server.address 0.0.0.0 --server.port 8501
+    env_file:
+      - .env
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "8502:8501"
+    volumes:
+      - processed_data:/app/processed_data
+    depends_on:
+      - backend
+    profiles:
+      - evals
+    restart: "no"
+
+volumes:
+  postgres_data:
+  processed_data:
