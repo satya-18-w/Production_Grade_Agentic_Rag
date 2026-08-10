@@ -36,6 +36,14 @@ class Settings:
     GROQ_SLUG =  "RAG1"     # primary: @rag/llama-3.3-70b-versatile
     GROQ_SLUG_2 = "RAG"  # fallback: @brag/llama-3.1-8b-instant
 
+    # Saved Portkey config slugs (e.g. "pc-xxxxx"). When the Portkey account
+    # has "block_inline_config" enabled, sending the fallback/cache/retry
+    # config as an inline JSON dict is rejected — a saved config referenced
+    # by slug must be used instead. Leave unset to keep sending the inline
+    # dict (only works while block_inline_config is off on the account).
+    PORTKEY_GATEWAY_CONFIG_SLUG = os.getenv("PORTKEY_GATEWAY_CONFIG_SLUG")
+    PORTKEY_GUARDRAIL_CONFIG_SLUG = os.getenv("PORTKEY_GUARDRAIL_CONFIG_SLUG")
+
     # --- POSTGRES CHECKPOINTER (LangGraph persistent memory) ---
     POSTGRES_URI = os.getenv("POSTGRES_URI")
 
