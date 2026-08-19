@@ -34,12 +34,14 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
-    # No POSTGRES_URI override here — .env's own value is used as-is via
-    # env_file above. If that value points at localhost/127.0.0.1, it
-    # won't resolve from inside this container (localhost means "this
-    # container," not the host) — point it at the `postgres` service name
-    # instead, or at the host's real reachable address, when running via
-    # compose.
+    environment:
+      # Overrides .env's POSTGRES_URI (environment: wins over env_file: in
+      # Compose). .env's own value is normally localhost — correct for
+      # running the backend directly on the host, but inside this
+      # container "localhost" means the container itself, not the
+      # `postgres` service next to it. Local (non-Docker) runs are
+      # unaffected since this override only applies here.
+      POSTGRES_URI: postgresql://postgres:password@postgres:5432/floatchat
     ports:
       - "8000:8000"
     volumes:

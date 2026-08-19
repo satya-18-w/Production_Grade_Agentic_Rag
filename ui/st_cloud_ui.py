@@ -3,7 +3,6 @@ import base64
 import streamlit as st
 import requests
 import time
-import uuid
 import logfire
 
 
@@ -26,29 +25,158 @@ st.set_page_config(
 AI_AVATAR = "🤖"
 USER_AVATAR = "👤"
 
-# --- SESSION MANAGEMENT ---
-if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
-    logfire.info(f"✨ New User Session Created: {st.session_state.session_id}")
+# --- BACKEND URL ---
+def _backend_url() -> str:
+    try:
+        raw = st.secrets.get("BACKEND_URL", os.getenv("BACKEND_URL", "http://127.0.0.1:8000"))
+    except Exception:
+        # No secrets.toml present (e.g. running locally, outside Streamlit
+        # Cloud) — st.secrets raises rather than behaving like an empty dict.
+        raw = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+    base_url = raw.strip()
+    if not base_url.startswith(("http://", "https://")):
+        base_url = f"http://{base_url}"
+    return base_url
+
+
+# --- AUTH STATE ---
+if "auth_token" not in st.session_state:
+    st.session_state.auth_token = None
+    st.session_state.username = None
+    st.session_state.user_id = None
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = None
+
+
+def _auth_headers() -> dict:
+    return {"Authorization": f"Bearer {st.session_state.auth_token}"}
+
+
+def _logout():
+    logfire.info(f"👋 User logged out: {st.session_state.username}")
+    st.session_state.auth_token = None
+    st.session_state.username = None
+    st.session_state.user_id = None
+    st.session_state.thread_id = None
+    st.session_state.messages = []
+
+
+def _new_thread(title: str | None = None) -> bool:
+    """Asks the backend for a fresh thread_id owned by the logged-in user.
+    Returns False (and surfaces the error) if the token has expired."""
+    try:
+        r = requests.post(
+            f"{_backend_url()}/auth/threads",
+            json={"title": title},
+            headers=_auth_headers(),
+            timeout=15,
+        )
+    except requests.exceptions.RequestException as e:
+        st.error(f"Backend Offline: {e}")
+        return False
+
+    if r.status_code == 401:
+        st.session_state.auth_token = None
+        st.error("Your session expired. Please log in again.")
+        return False
+    if r.status_code != 200:
+        st.error(f"Could not start a new chat: {r.status_code} - {r.text}")
+        return False
+
+    st.session_state.thread_id = r.json()["thread_id"]
+    st.session_state.messages = []
+    return True
+
+
+# --- LOGIN / SIGNUP GATE ---
+# Everything below the auth check requires a valid bearer token — /query
+# and /auth/threads on the backend both reject unauthenticated requests.
+if not st.session_state.auth_token:
+    st.title("🤖 Enterprise Agentic Assistant")
+    st.subheader("Sign in to continue")
+
+    login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
+
+    with login_tab:
+        with st.form("login_form"):
+            username = st.text_input("Username", key="login_username")
+            password = st.text_input("Password", type="password", key="login_password")
+            submitted = st.form_submit_button("Log in", type="primary")
+        if submitted:
+            try:
+                r = requests.post(
+                    f"{_backend_url()}/auth/login",
+                    json={"username": username, "password": password},
+                    timeout=15,
+                )
+            except requests.exceptions.RequestException as e:
+                st.error(f"Backend Offline: {e}")
+                r = None
+            if r is not None:
+                if r.status_code == 200:
+                    data = r.json()
+                    st.session_state.auth_token = data["token"]
+                    st.session_state.username = data["username"]
+                    st.session_state.user_id = data["user_id"]
+                    logfire.info(f"✅ Login: {data['username']}")
+                    st.rerun()
+                else:
+                    st.error(r.json().get("detail", "Login failed."))
+
+    with signup_tab:
+        with st.form("signup_form"):
+            new_username = st.text_input("Username", key="signup_username")
+            new_password = st.text_input(
+                "Password (min 8 characters)", type="password", key="signup_password"
+            )
+            submitted = st.form_submit_button("Create account", type="primary")
+        if submitted:
+            try:
+                r = requests.post(
+                    f"{_backend_url()}/auth/signup",
+                    json={"username": new_username, "password": new_password},
+                    timeout=15,
+                )
+            except requests.exceptions.RequestException as e:
+                st.error(f"Backend Offline: {e}")
+                r = None
+            if r is not None:
+                if r.status_code == 200:
+                    data = r.json()
+                    st.session_state.auth_token = data["token"]
+                    st.session_state.username = data["username"]
+                    st.session_state.user_id = data["user_id"]
+                    logfire.info(f"✨ New account: {data['username']}")
+                    st.rerun()
+                else:
+                    st.error(r.json().get("detail", "Sign up failed."))
+
+    st.stop()
+
+# A thread must exist before the chat below can call /query.
+if not st.session_state.thread_id:
+    if not _new_thread():
+        st.stop()
+
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("🧠 Agent OS")
     st.markdown("---")
-
-    base_url = "http://localhost:8000"
-
-    st.markdown("---")
     st.success(f"Logfire: {LOGFIRE_STATUS}")
-    st.info(f"Memory ID: {st.session_state.session_id[:8]}")
-    
-    if st.button("🗑️ Clear History & Memory", width="stretch", type="primary"):
-        logfire.warning(f"🗑️ Memory Wipe Triggered for session: {st.session_state.session_id}")
-        st.session_state.messages = []
-        st.session_state.session_id = str(uuid.uuid4())
+    st.info(f"Logged in as **{st.session_state.username}**")
+    st.caption(f"Thread: {st.session_state.thread_id[:8]}")
+
+    if st.button("🗑️ New Chat", width="stretch", type="primary"):
+        if _new_thread():
+            st.rerun()
+
+    if st.button("Log out", width="stretch"):
+        _logout()
         st.rerun()
 
 # --- MAIN CHAT ---
@@ -76,7 +204,7 @@ if submission := st.chat_input(
     with logfire.span(
         "💬 User Chat Interaction",
         user_query=user_text,
-        session_id=st.session_state.session_id,
+        thread_id=st.session_state.thread_id,
         has_image=bool(uploaded_file),
     ):
 
@@ -96,13 +224,17 @@ if submission := st.chat_input(
             with st.status("🔍 Agent is thinking...", expanded=True) as status:
                 try:
                     with logfire.span("📡 Calling RAG Backend"):
-                        url = f"{base_url}/query"
-                        payload = {"q": user_text, "thread_id": st.session_state.session_id}
+                        url = f"{_backend_url()}/query"
+                        payload = {"q": user_text, "thread_id": st.session_state.thread_id}
                         if uploaded_file:
                             payload["image_base64"] = base64.b64encode(uploaded_file.getvalue()).decode("ascii")
                             payload["image_content_type"] = uploaded_file.type
-                        response = requests.post(url, json=payload, timeout=60)
+                        response = requests.post(url, json=payload, headers=_auth_headers(), timeout=60)
 
+                        if response.status_code == 401:
+                            _logout()
+                            st.error("Your session expired. Please log in again.")
+                            st.rerun()
                         if response.status_code != 200:
                             st.error(f"Backend Error: {response.status_code} - {response.text}")
                             st.stop()

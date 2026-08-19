@@ -147,6 +147,18 @@ def list_threads(user_id: int) -> list[dict]:
     ]
 
 
+def thread_owner(thread_id: str) -> int | None:
+    """The user_id that owns this thread, or None if it doesn't exist.
+    Used by main.py's /query to reject a thread_id that wasn't issued to
+    the caller — otherwise any authenticated user could read any other
+    user's conversation just by guessing/reusing a thread_id."""
+    with _get_pool().connection() as conn:
+        row = conn.execute(
+            "SELECT user_id FROM app_threads WHERE thread_id = %s", (thread_id,)
+        ).fetchone()
+    return row[0] if row else None
+
+
 def touch_thread(thread_id: str, title_if_untitled: str | None = None) -> None:
     """Bumps updated_at (recency sort in the thread list) and, if the
     thread has no title yet, sets one from the first message — called

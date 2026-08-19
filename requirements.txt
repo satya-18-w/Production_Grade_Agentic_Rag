@@ -40,6 +40,8 @@ psycopg[binary,pool]        # psycopg3 driver + connection pool (required by che
 
 # --- USER ACCOUNTS & MULTI-THREAD PERSISTENCE ---
 bcrypt                       # Password hashing for app/auth/service.py — never store plaintext
+pyjwt                        # JWT bearer tokens for app/auth/tokens.py
+slowapi                      # Per-IP rate limiting on /auth/* and /query (app/main.py)
 langchain-groq              # Integration for lightning-fast Llama 3.3 models
 langchain-google-vertexai   # Required shim for NeMo Guardrails internal import (no GCP credentials needed)
 langchain-community         # Community-contributed tools and loaders
