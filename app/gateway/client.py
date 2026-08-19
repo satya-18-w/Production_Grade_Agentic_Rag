@@ -2,10 +2,15 @@ import logfire
 from portkey_ai import Portkey, createHeaders, PORTKEY_GATEWAY_URL
 from langchain_openai import ChatOpenAI
 
-from app.config import settings
+from app.config import settings, PORTKEY_GATEWAY_CONFIG_SLUG, PORTKEY_GUARDRAIL_CONFIG_SLUG
 
 
-# Production gateway config:
+# Documents what PORTKEY_GATEWAY_CONFIG_SLUG (below) is configured to do on
+# the Portkey dashboard — kept here so the strategy is visible in the repo,
+# not because it's sent on the wire. This account has block_inline_config
+# enabled, so Portkey rejects an inline dict passed as `config=` (400
+# inline_config_blocked); every call below must reference the saved config
+# by its 'pc-...' slug instead.
 #   - Fallback: primary @rag/llama-3.3-70b-versatile → @brag/llama-3.1-8b-instant on failure
 #   - Cache: semantic mode (requires Portkey Enterprise — silently falls back to simple on free/starter)
 #   - Retry: 2 attempts on rate limit / server error before triggering the fallback target
@@ -60,11 +65,14 @@ def get_langchain_llm(feature: str = "rag") -> ChatOpenAI:
         )
     )
 
-# Guardrail gate config: primary target is the fast/cheap 8b model — intent
-# classification at the gate doesn't need the 70B model's quality. Falls back
-# to the 70B target only if the 8b target itself is unavailable. This keeps
-# guardrail calls inside the same fallback/retry/observability gateway as
-# every other LLM call in the system, instead of a raw ChatGroq client.
+# Documents what PORTKEY_GUARDRAIL_CONFIG_SLUG (below) is configured to do
+# on the Portkey dashboard — see the GATEWAY_CONFIG comment above for why
+# the slug, not this dict, is what's actually sent. Primary target is the
+# fast/cheap 8b model — intent classification at the gate doesn't need the
+# 70B model's quality. Falls back to the 70B target only if the 8b target
+# itself is unavailable. This keeps guardrail calls inside the same
+# fallback/retry/observability gateway as every other LLM call in the
+# system, instead of a raw ChatGroq client.
 GUARDRAIL_GATEWAY_CONFIG = {
     "strategy": {"mode": "fallback"},
     "cache": {"mode": "simple"},

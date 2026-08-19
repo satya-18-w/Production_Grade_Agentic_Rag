@@ -26,6 +26,8 @@ graph LR
 All document parsing runs entirely on-device — no external OCR service or cloud API is required:
 
 > **Multimodal update:** images referenced in PDF/PPTX/DOCX/HTML are now also extracted, captioned by a vision model, and indexed alongside text — including images that are external links rather than embedded (common in docs sourced from web articles). This is the one place the pipeline does make outbound network calls beyond the LLM/embedding/vector-DB APIs it already required. See [13_MULTIMODAL_RAG.md](13_MULTIMODAL_RAG.md) for the full design, safety limits, and what was learned testing it against the real corpus.
+>
+> **One exception to "no external service required":** PPTX slides built from native vector shapes (no embedded picture — see `architecture.pptx`) need an actual rendering engine, not just a parsing library. That one feature (Track E) optionally shells out to headless LibreOffice + poppler, both system binaries, not pip packages. Every other loader in this file remains fully self-contained.
 *   **PDFs**: Parsed locally via **pypdf** (primary) and **pdfplumber** (fallback for complex layouts). Handles multi-page PDFs without any page-count limits.
 *   **HTML**: Processed via **BeautifulSoup**. It intelligently strips out `<script>`, `<style>`, and metadata tags to extract only the readable content.
 *   **Office Docs**: Supports `.docx` via `python-docx` and `.pptx` via `python-pptx`.

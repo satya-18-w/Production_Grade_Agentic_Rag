@@ -37,6 +37,11 @@ langchain                   # Core LLM orchestration
 langgraph                   # State-machine logic for cyclic agent flows
 langgraph-checkpoint-postgres  # PostgreSQL-backed persistent memory for LangGraph
 psycopg[binary,pool]        # psycopg3 driver + connection pool (required by checkpointer)
+
+# --- USER ACCOUNTS & MULTI-THREAD PERSISTENCE ---
+bcrypt                       # Password hashing for app/auth/service.py — never store plaintext
+pyjwt                        # JWT bearer tokens for app/auth/tokens.py
+slowapi                      # Per-IP rate limiting on /auth/* and /query (app/main.py)
 langchain-groq              # Integration for lightning-fast Llama 3.3 models
 langchain-google-vertexai   # Required shim for NeMo Guardrails internal import (no GCP credentials needed)
 langchain-community         # Community-contributed tools and loaders
@@ -50,6 +55,18 @@ python-docx                 # Parser for Word documents
 pypdf                       # Local PDF text extraction (replaces Document AI)
 beautifulsoup4              # High-speed HTML text extraction
 pdfplumber                  # Fallback PDF parser for scanned/complex layouts
+
+# --- PPTX VECTOR-SHAPE DIAGRAM RENDERING (Track E, optional) ---
+# Renders PPTX slides built from native shapes (no embedded picture to
+# extract) to PNG via headless LibreOffice. pdf2image is a thin wrapper
+# around the poppler-utils system binary (pdftoppm/pdftocairo) — NOT
+# bundled by pip. Both LibreOffice and poppler must be installed
+# separately on the host (e.g. `apt-get install libreoffice poppler-utils`
+# on Debian/Ubuntu). This is the one loader in the codebase with a system
+# binary dependency; if either is missing, rendering degrades to "no
+# rendered slides" rather than failing ingestion — see
+# app/ingestion/loaders/images.py::render_pptx_diagram_slides().
+pdf2image                   # PDF page -> PIL Image, via poppler (system dependency, not pip-installed)
 
 # --- OBSERVABILITY & DISTRIBUTED TRACING ---
 langsmith                   # Specialized tracing for LangChain/LangGraph

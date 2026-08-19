@@ -47,17 +47,48 @@ class Settings:
     # --- POSTGRES CHECKPOINTER (LangGraph persistent memory) ---
     POSTGRES_URI = os.getenv("POSTGRES_URI")
 
-    
+    # --- AUTH (JWT bearer tokens, app/auth/) ---
+    AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY")
+    AUTH_TOKEN_EXPIRE_MINUTES = int(os.getenv("AUTH_TOKEN_EXPIRE_MINUTES", 60 * 24 * 7))  # 7 days
+
+    # --- API HARDENING ---
+    # Comma-separated list of allowed browser origins for CORS. "*" is the
+    # permissive default so local/dev setups work out of the box — restrict
+    # this to your real UI origin(s) for a public deployment.
+    ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
+
     # --- OBSERVABILITY ---
     LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING", "true")
     LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
     LANGSMITH_PROJECT = os.getenv("LANGSMITH_PROJECT", "rag_scale_test")
     LANGSMITH_ENDPOINT = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
 
+    @staticmethod
+    def validate() -> None:
+        """Fail fast at startup instead of deep inside a request. Mirrors
+        the RuntimeError pattern app/agents/graph.py already uses for
+        POSTGRES_URI, extended to every other required credential."""
+        required = {
+            "PORTKEY_API_KEY": Settings.PORTKEY_API_KEY,
+            "QDRANT_API_KEY": Settings.QDRANT_API_KEY,
+            "QDRANT_CLUSTER_ENDPOINT": Settings.QDRANT_URL,
+            "GOOGLEGEMINI_API_KEY": Settings.GEMINI_API_KEY,
+            "POSTGRES_URI": Settings.POSTGRES_URI,
+            "AUTH_SECRET_KEY": Settings.AUTH_SECRET_KEY,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise RuntimeError(
+                "Missing required environment variable(s): "
+                f"{', '.join(missing)}. Set them in your .env file."
+            )
+
 # Apply LangChain environment variables for automatic tracing
 os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGSMITH_TRACING", "true")
 os.environ["LANGCHAIN_API_KEY"] = os.getenv("LANGSMITH_API_KEY", "")
 os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGSMITH_PROJECT", "rag_scale_test")
 os.environ["LANGCHAIN_ENDPOINT"] = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
-
+PORTKEY_GATEWAY_CONFIG_SLUG = os.getenv("PORTKEY_GATEWAY_CONFIG_SLUG")
+PORTKEY_GUARDRAIL_CONFIG_SLUG = os.getenv("PORTKEY_GUARDRAIL_CONFIG_SLUG")
 settings = Settings()
+settings.validate()
