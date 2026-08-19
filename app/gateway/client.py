@@ -1,8 +1,24 @@
+import re
+
 import logfire
 from portkey_ai import Portkey, createHeaders, PORTKEY_GATEWAY_URL
 from langchain_openai import ChatOpenAI
 
 from app.config import settings, PORTKEY_GATEWAY_CONFIG_SLUG, PORTKEY_GUARDRAIL_CONFIG_SLUG
+
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def strip_reasoning(content: str) -> str:
+    """
+    Drop <think>...</think> reasoning traces some Groq models (e.g.
+    qwen3.6) inline into `content` regardless of reasoning_format —
+    that param has no effect on those models, so this is the only way
+    to keep raw thinking text out of what the user/guardrails see.
+    """
+    if not content:
+        return content
+    return _THINK_BLOCK_RE.sub("", content).strip()
 
 
 # Documents what PORTKEY_GATEWAY_CONFIG_SLUG (below) is configured to do on
@@ -11,7 +27,7 @@ from app.config import settings, PORTKEY_GATEWAY_CONFIG_SLUG, PORTKEY_GUARDRAIL_
 # enabled, so Portkey rejects an inline dict passed as `config=` (400
 # inline_config_blocked); every call below must reference the saved config
 # by its 'pc-...' slug instead.
-#   - Fallback: primary @rag/llama-3.3-70b-versatile → @brag/llama-3.1-8b-instant on failure
+#   - Fallback: primary @RAG1/qwen/qwen3.6-27b → @RAG2/groq/compound on failure
 #   - Cache: semantic mode (requires Portkey Enterprise — silently falls back to simple on free/starter)
 #   - Retry: 2 attempts on rate limit / server error before triggering the fallback target
 GATEWAY_CONFIG = {
@@ -22,20 +38,62 @@ GATEWAY_CONFIG = {
         "on_status_codes": [429, 503]
     },
     "targets": [
-        {"override_params": {"model": f"@{settings.GROQ_SLUG}/llama-3.3-70b-versatile"}},
-        {"override_params": {"model": f"@{settings.GROQ_SLUG_2}/llama-3.1-8b-instant"}},
+        {"override_params": {"model": "@RAG1/qwen/qwen3.6-27b", "reasoning_format": "hidden"}},
+        {"override_params": {"model": "@RAG2/groq/compound"}},
     ]
 }
 
 # A saved config slug (string) is sent as-is; an inline dict is JSON-encoded
 # into the x-portkey-config header. Accounts with "block_inline_config"
 # enabled reject the latter, so the slug takes precedence when configured.
-RESOLVED_GATEWAY_CONFIG = settings.PORTKEY_GATEWAY_CONFIG_SLUG or GATEWAY_CONFIG
+if settings.PORTKEY_USE_GATEWAY_CONFIG:
+    RESOLVED_GATEWAY_CONFIG = (
+        settings.PORTKEY_GATEWAY_CONFIG_SLUG or GATEWAY_CONFIG
+    )
+else:
+    RESOLVED_GATEWAY_CONFIG = None
 
-portkey_client = Portkey(
-    api_key=settings.PORTKEY_API_KEY,
-    config=RESOLVED_GATEWAY_CONFIG
-)
+if settings.PORTKEY_USE_GATEWAY_CONFIG:
+    portkey_client = Portkey(api_key=settings.PORTKEY_API_KEY, config=RESOLVED_GATEWAY_CONFIG)
+else:
+    portkey_client = Portkey(api_key=settings.PORTKEY_API_KEY)
+
+
+def _build_portkey_headers(feature: str, config=None) -> dict:
+    """Build Portkey headers without inline config unless explicitly enabled."""
+    if settings.PORTKEY_USE_GATEWAY_CONFIG:
+        return createHeaders(
+            api_key=settings.PORTKEY_API_KEY,
+            config=config,
+            metadata={
+                "feature": feature,
+                "_user": "rag-system",
+                "environment": "production",
+            },
+        )
+
+    # If inline config is disabled at the account level, sending an inline
+    # dict causes a 400 inline_config_blocked. We omit config here and let
+    # the Portkey account defaults apply.
+    return createHeaders(
+        api_key=settings.PORTKEY_API_KEY,
+        provider=settings.LLM_PROVIDER,
+        metadata={
+            "feature": feature,
+            "_user": "rag-system",
+            "environment": "production",
+        },
+    )
+
+
+def _resolve_portkey_model(slug: str, model: str) -> str:
+    # With a valid config slug, models are sent as `@slug/model` (Portkey route).
+    # Without that config path, pass the upstream model name directly to avoid
+    # "Following keys are not valid: <slug>" errors when the account has
+    # different/unknown provider aliases.
+    # Portkey config slugs can include all routing now, so the model is sent
+    # as plain model name to avoid reliance on external slug aliases.
+    return model
 
 
 def get_langchain_llm(feature: str = "rag") -> ChatOpenAI:
@@ -52,17 +110,9 @@ def get_langchain_llm(feature: str = "rag") -> ChatOpenAI:
     return ChatOpenAI(
         api_key=settings.PORTKEY_API_KEY,
         base_url=PORTKEY_GATEWAY_URL,
-        model=f"@{settings.GROQ_SLUG}/llama-3.3-70b-versatile",
+        model=_resolve_portkey_model(settings.GROQ_SLUG, "qwen/qwen3.6-27b"),
         temperature=0,
-        default_headers=createHeaders(
-            api_key=settings.PORTKEY_API_KEY,
-            config=RESOLVED_GATEWAY_CONFIG,
-            metadata={
-                "feature": feature,
-                "_user": "rag-system",
-                "environment": "production"
-            }
-        )
+        default_headers=_build_portkey_headers(feature, RESOLVED_GATEWAY_CONFIG)
     )
 
 # Documents what PORTKEY_GUARDRAIL_CONFIG_SLUG (below) is configured to do
@@ -81,14 +131,17 @@ GUARDRAIL_GATEWAY_CONFIG = {
         "on_status_codes": [429, 503]
     },
     "targets": [
-        {"override_params": {"model": f"@{settings.GROQ_SLUG_2}/llama-3.1-8b-instant"}},
-        {"override_params": {"model": f"@{settings.GROQ_SLUG}/llama-3.3-70b-versatile"}},
+        {"override_params": {"model": "@RAG2/groq/compound"}},
+        {"override_params": {"model": "@RAG1/qwen/qwen3.6-27b", "reasoning_format": "hidden"}},
     ]
 }
 
-RESOLVED_GUARDRAIL_GATEWAY_CONFIG = (
-    settings.PORTKEY_GUARDRAIL_CONFIG_SLUG or GUARDRAIL_GATEWAY_CONFIG
-)
+if settings.PORTKEY_USE_GATEWAY_CONFIG:
+    RESOLVED_GUARDRAIL_GATEWAY_CONFIG = (
+        settings.PORTKEY_GUARDRAIL_CONFIG_SLUG or GUARDRAIL_GATEWAY_CONFIG
+    )
+else:
+    RESOLVED_GUARDRAIL_GATEWAY_CONFIG = None
 
 
 def get_guardrail_llm() -> ChatOpenAI:
@@ -100,17 +153,9 @@ def get_guardrail_llm() -> ChatOpenAI:
     return ChatOpenAI(
         api_key=settings.PORTKEY_API_KEY,
         base_url=PORTKEY_GATEWAY_URL,
-        model=f"@{settings.GROQ_SLUG_2}/llama-3.1-8b-instant",
+        model=_resolve_portkey_model(settings.GROQ_SLUG_2, "groq/compound"),
         temperature=0,
-        default_headers=createHeaders(
-            api_key=settings.PORTKEY_API_KEY,
-            config=RESOLVED_GUARDRAIL_GATEWAY_CONFIG,
-            metadata={
-                "feature": "guardrails",
-                "_user": "rag-system",
-                "environment": "production"
-            }
-        )
+        default_headers=_build_portkey_headers("guardrails", RESOLVED_GUARDRAIL_GATEWAY_CONFIG)
     )
 
 

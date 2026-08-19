@@ -1,7 +1,7 @@
 import logfire
 from nemoguardrails import RailsConfig, LLMRails
 
-from app.gateway import get_guardrail_llm
+from app.gateway import get_guardrail_llm, strip_reasoning
 from app.guardrails.colang_rules import COLANG_CONTENT, YAML_CONTENT, RAIL_INDICATORS
 
 
@@ -14,8 +14,8 @@ def initialize_rails() -> None:
     Routes through the Portkey gateway (get_guardrail_llm) instead of a raw
     ChatGroq client, so the gate gets the same fallback/retry/dashboard
     visibility as every other LLM call in the system. Targets
-    llama-3.1-8b-instant first — fast, cheap intent classification — falling
-    back to llama-3.3-70b-versatile only if the 8b target is unavailable.
+    groq/compound first — fast intent classification — falling back to
+    qwen/qwen3.6-27b only if the primary target is unavailable.
     """
     global _rails
 
@@ -27,7 +27,7 @@ def initialize_rails() -> None:
     )
 
     _rails = LLMRails(config, llm=guard_llm)
-    logfire.info("🛡️ NeMo Guardrails initialised (Portkey-routed llama-3.1-8b-instant).")
+    logfire.info("🛡️ NeMo Guardrails initialised (Portkey-routed groq/compound).")
 
 
 
@@ -59,6 +59,7 @@ def guard(message: str) -> tuple[bool, str | None]:
 
         # NeMo returns {'role': 'assistant', 'content': '...'} — extract text
         content = result.get("content", "") if isinstance(result, dict) else str(result)
+        content = strip_reasoning(content)
 
         fired = any(indicator in content for indicator in RAIL_INDICATORS)
 

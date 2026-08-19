@@ -35,12 +35,10 @@ services:
     env_file:
       - .env
     environment:
-      # Overrides .env's POSTGRES_URI (environment: wins over env_file: in
-      # Compose). .env's own value is normally localhost — correct for
-      # running the backend directly on the host, but inside this
-      # container "localhost" means the container itself, not the
-      # `postgres` service next to it. Local (non-Docker) runs are
-      # unaffected since this override only applies here.
+      # Overrides .env's POSTGRES_URI when needed so the backend container
+      # always points at the `postgres` service inside the Docker network.
+      # Local (non-Docker) runs should set POSTGRES_URI in your shell or
+      # local env file to a host-local Postgres DSN.
       POSTGRES_URI: postgresql://postgres:password@postgres:5432/floatchat
     ports:
       - "8000:8000"
