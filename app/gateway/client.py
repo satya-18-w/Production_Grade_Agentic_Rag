@@ -27,9 +27,14 @@ GATEWAY_CONFIG = {
     ]
 }
 
+# A saved config slug (string) is sent as-is; an inline dict is JSON-encoded
+# into the x-portkey-config header. Accounts with "block_inline_config"
+# enabled reject the latter, so the slug takes precedence when configured.
+RESOLVED_GATEWAY_CONFIG = settings.PORTKEY_GATEWAY_CONFIG_SLUG or GATEWAY_CONFIG
+
 portkey_client = Portkey(
     api_key=settings.PORTKEY_API_KEY,
-    config=PORTKEY_GATEWAY_CONFIG_SLUG
+    config=RESOLVED_GATEWAY_CONFIG
 )
 
 
@@ -51,7 +56,7 @@ def get_langchain_llm(feature: str = "rag") -> ChatOpenAI:
         temperature=0,
         default_headers=createHeaders(
             api_key=settings.PORTKEY_API_KEY,
-            config=PORTKEY_GATEWAY_CONFIG_SLUG,
+            config=RESOLVED_GATEWAY_CONFIG,
             metadata={
                 "feature": feature,
                 "_user": "rag-system",
@@ -81,6 +86,10 @@ GUARDRAIL_GATEWAY_CONFIG = {
     ]
 }
 
+RESOLVED_GUARDRAIL_GATEWAY_CONFIG = (
+    settings.PORTKEY_GUARDRAIL_CONFIG_SLUG or GUARDRAIL_GATEWAY_CONFIG
+)
+
 
 def get_guardrail_llm() -> ChatOpenAI:
     """
@@ -95,7 +104,7 @@ def get_guardrail_llm() -> ChatOpenAI:
         temperature=0,
         default_headers=createHeaders(
             api_key=settings.PORTKEY_API_KEY,
-            config=PORTKEY_GUARDRAIL_CONFIG_SLUG,
+            config=RESOLVED_GUARDRAIL_GATEWAY_CONFIG,
             metadata={
                 "feature": "guardrails",
                 "_user": "rag-system",
