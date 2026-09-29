@@ -140,6 +140,19 @@ uvicorn app.main:app --reload --port 8000
 streamlit run ui/app.py
 ```
 
+### 4b. Azure deployment helper scripts
+
+- Use `on.sh` / `off.sh` only for VM power lifecycle (start, stop, deallocate).
+- Use `deploy.sh` for deployment/rebuild actions that must update environment and compose stack.
+
+```bash
+# Deploy code/env changes from this repo to the VM and bring stack up
+./deploy.sh /path/to/.env --build
+
+# Recycle stack with existing env without rebuild
+./deploy.sh /path/to/.env --no-build
+```
+
 ### 5. Run the eval suite (optional)
 
 ```powershell

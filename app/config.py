@@ -6,7 +6,7 @@ load_dotenv()
 
 class Settings:
     # --- GEMINI EMBEDDINGS ---
-    GEMINI_API_KEY = os.getenv("GOOGLEGEMINI_API_KEY")
+    GEMINI_API_KEY = os.getenv("GOOGLEGEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
     # --- GEMINI VISION (multimodal image captioning — primary) ---
     GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
@@ -27,14 +27,18 @@ class Settings:
     QDRANT_COLLECTION = "enterprise_rag"
 
     # --- REASONING ENGINE (GROQ) ---
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", os.getenv("LLM_API_KEY"))
     GROQ_MODEL = "llama-3.3-70b-versatile"
     GROQ_FALLBACK_API_KEY = os.getenv("GROQ_FALLBACK_API_KEY")
+    GROQ_SLUG = os.getenv("GROQ_SLUG", "rag")
+    GROQ_SLUG_2 = os.getenv("GROQ_SLUG_2", "brag")
 
     # --- LLM GATEWAY (PORTKEY) ---
     PORTKEY_API_KEY = os.getenv("PORTKEY_API_KEY")
-    GROQ_SLUG =  "RAG1"     # primary: @rag/llama-3.3-70b-versatile
-    GROQ_SLUG_2 = "RAG"  # fallback: @brag/llama-3.1-8b-instant
+    PORTKEY_USE_GATEWAY_CONFIG = os.getenv(
+        "PORTKEY_USE_GATEWAY_CONFIG", "false"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").strip() or "groq"
 
     # Saved Portkey config slugs (e.g. "pc-xxxxx"). When the Portkey account
     # has "block_inline_config" enabled, sending the fallback/cache/retry
@@ -55,7 +59,7 @@ class Settings:
     # Comma-separated list of allowed browser origins for CORS. "*" is the
     # permissive default so local/dev setups work out of the box — restrict
     # this to your real UI origin(s) for a public deployment.
-    ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*")
+    ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", os.getenv("CORS_ORIGINS", "*"))
 
     # --- OBSERVABILITY ---
     LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING", "true")
